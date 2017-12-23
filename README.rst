@@ -1,65 +1,44 @@
-============
-Scrapy-Redis
-============
+基于scrapy爬虫框架搭建的redis分布式组件
+框架图参考:
+http://note.youdao.com/noteshare?id=1ed21d3fc3da7c0a614a9063d72103dc&sub=FBF09061B91C4EDEBB047710781207FC
 
-.. image:: https://readthedocs.org/projects/scrapy-redis/badge/?version=latest
-        :target: https://readthedocs.org/projects/scrapy-redis/?badge=latest
-        :alt: Documentation Status
 
-.. image:: https://img.shields.io/pypi/v/scrapy-redis.svg
-        :target: https://pypi.python.org/pypi/scrapy-redis
+由图可知:
+它基于scrapy框架,在scheduler调度器和Item pipeline数据管道中添加redis,
+使redis来存储调度器的request队列,以及'判断该request队列是否已经实现过'而生成的指纹集合
+还负责存储item管道处理后的数据
 
-.. image:: https://img.shields.io/pypi/pyversions/scrapy-redis.svg
-        :target: https://pypi.python.org/pypi/scrapy-redis
+所以,如果想使用该组件:
+    1.需要重写scheduler调度器,
+    2.对请求过的request进行过滤去重
+    3.需要pipelines的Item被redis来过滤,在setting中设置权重
 
-.. image:: https://img.shields.io/travis/rolando/scrapy-redis.svg
-        :target: https://travis-ci.org/rolando/scrapy-redis
+而我们调用该scrapy_redis库后,只需要在设置中配置:
+    1.重写scheduler调度器的组件:
+        # Enables scheduling storing requests queue in redis.
+        SCHEDULER = "scrapy_redis.scheduler.Scheduler"
+    2.过滤request的组件:
+        # Ensure all spiders share same duplicates filter through redis.
+        DUPEFILTER_CLASS = "scrapy_redis.dupefilter.RFPDupeFilter"
+    3.队列中的内容是否持久保持,为false则使在程序关闭的时候清除redis
+        # Don't cleanup redis queues, allows to pause/resume crawls.
+        SCHEDULER_PERSIST = True
+    4.存储Item的组件
+        # Store scraped item in redis for post-processing.
+          ITEM_PIPELINES = {
+              # 'example.pipelines.ExamplePipeline': 300,
+              'scrapy_redis.pipelines.RedisPipeline': 400
+          }
+    5.redis配置
+        # Specify the full Redis URL for connecting (optional).
+        # If set, this takes precedence over the REDIS_HOST and REDIS_PORT settings.
+        #REDIS_URL = 'redis://user:pass@hostname:9001'
+        REDIS_URL = 'redis://127.0.0.1:6379'
 
-.. image:: https://codecov.io/github/rolando/scrapy-redis/coverage.svg?branch=master
-    :alt: Coverage Status
-    :target: https://codecov.io/github/rolando/scrapy-redis
+如果需要分布式处理
+    1.需要继承scrapy_redis中的spiders来实现爬虫,可以参考Feeding a Spider from Redis案例
 
-.. image:: https://landscape.io/github/rolando/scrapy-redis/master/landscape.svg?style=flat
-    :target: https://landscape.io/github/rolando/scrapy-redis/master
-    :alt: Code Quality Status
-
-.. image:: https://requires.io/github/rolando/scrapy-redis/requirements.svg?branch=master
-    :alt: Requirements Status
-    :target: https://requires.io/github/rolando/scrapy-redis/requirements/?branch=master
-
-Redis-based components for Scrapy.
-
-* Free software: MIT license
-* Documentation: https://scrapy-redis.readthedocs.org.
-* Python versions: 2.7, 3.4+
-
-Features
---------
-
-* Distributed crawling/scraping
-
-    You can start multiple spider instances that share a single redis queue.
-    Best suitable for broad multi-domain crawls.
-
-* Distributed post-processing
-
-    Scraped items gets pushed into a redis queued meaning that you can start as
-    many as needed post-processing processes sharing the items queue.
-
-* Scrapy plug-and-play components
-  
-    Scheduler + Duplication Filter, Item Pipeline, Base Spiders.
-    
-.. note:: This features cover the basic case of distributing the workload across multiple workers. If you need more features like URL expiration, advanced URL prioritization, etc., we suggest you to take a look at the `Frontera`_ project.
-
-Requirements
-------------
-
-* Python 2.7, 3.4 or 3.5
-* Redis >= 2.8
-* ``Scrapy`` >= 1.1
-* ``redis-py`` >= 2.10
-
+具体配置可以参考官方配置
 Usage
 -----
 
@@ -83,7 +62,7 @@ Use the following settings in your project:
   #SCHEDULER_SERIALIZER = "scrapy_redis.picklecompat"
 
   # Don't cleanup redis queues, allows to pause/resume crawls.
-  #SCHEDULER_PERSIST = True
+  SCHEDULER_PERSIST = True
 
   # Schedule requests using a priority queue. (default)
   #SCHEDULER_QUEUE_CLASS = 'scrapy_redis.queue.PriorityQueue'
@@ -110,8 +89,8 @@ Use the following settings in your project:
   #REDIS_ITEMS_SERIALIZER = 'json.dumps'
 
   # Specify the host and port to use when connecting to Redis (optional).
-  #REDIS_HOST = 'localhost'
-  #REDIS_PORT = 6379
+  REDIS_HOST = 'localhost'
+  REDIS_PORT = 6379
 
   # Specify the full Redis URL for connecting (optional).
   # If set, this takes precedence over the REDIS_HOST and REDIS_PORT settings.
@@ -140,9 +119,42 @@ Use the following settings in your project:
   therefore persisted requests using version 0.2 will not able to work on 0.3.
 
 
+
+Features
+--------
+去重:request去重/数据item去重
+持久化:暂停过后再次重启,会从暂停的地方再次执行
+分布式:可以联合多台电脑一起来实现爬虫,只需要将redis配置成一样,并且使用向redis添加start_url的方式就可以,
+    此时的爬虫就需要继承scrapy_redis中的spiders来实现
+
+
+
+* Distributed crawling/scraping
+
+    You can start multiple spider instances that share a single redis queue.
+    Best suitable for broad multi-domain crawls.
+
+* Distributed post-processing
+
+    Scraped items gets pushed into a redis queued meaning that you can start as
+    many as needed post-processing processes sharing the items queue.
+
+* Scrapy plug-and-play components
+
+    Scheduler + Duplication Filter, Item Pipeline, Base Spiders.
+
+.. note:: This features cover the basic case of distributing the workload across multiple workers. If you need more features like URL expiration, advanced URL prioritization, etc., we suggest you to take a look at the `Frontera`_ project.
+
+
+
+
 Running the example project
 ---------------------------
 
+两个案例,
+第一个实现暂停过后重启,依旧从暂停位置处理
+第二个实现分布式爬虫,需要先开启爬虫,然后向redis添加键为开始的url
+具体的案例实现可以参考example-project,里面有相应解释
 This example illustrates how to share a spider's requests queue
 across multiple spider instances, highly suitable for broad crawls.
 
@@ -212,18 +224,3 @@ Then:
     These spiders rely on the spider idle signal to fetch start urls, hence it
     may have a few seconds of delay between the time you push a new url and the
     spider starts crawling it.
-
-
-Contributions
--------------
-
-Donate BTC: ``13haqimDV7HbGWtz7uC6wP1zvsRWRAhPmF``
-
-Donate BCC: ``CSogMjdfPZnKf1p5ocu3gLR54Pa8M42zZM``
-
-Donate ETH: ``0x681d9c8a2a3ff0b612ab76564e7dca3f2ccc1c0d``
-
-Donate LTC: ``LaPHpNS1Lns3rhZSvvkauWGDfCmDLKT8vP``
-
-
-.. _Frontera: https://github.com/scrapinghub/frontera
